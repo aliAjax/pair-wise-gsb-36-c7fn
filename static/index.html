@@ -1,18 +1,30 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>水资源权配置</title>
-<style>body{font:15px/1.5 system-ui,sans-serif;max-width:980px;margin:32px auto;padding:0 18px}input,select,button{padding:7px;margin:3px}.card{border:1px solid #d9e1e8;border-radius:10px;padding:16px;margin:16px 0}pre{background:#f5f7f9;padding:12px;overflow:auto}small{color:#667}button{cursor:pointer}</style></head>
-<body><h1>跨区域水资源使用权</h1><p>示例账户初始化后，可查看余额、发起转让、审核，并模拟干旱分配。</p>
-<div class="card"><h2>身份</h2><input id="user" value="alice"><select id="role"><option>editor</option><option>reviewer</option><option>meter</option><option>viewer</option></select></div>
+<style>body{font:15px/1.5 system-ui,sans-serif;max-width:980px;margin:32px auto;padding:0 18px}input,select,button{padding:7px;margin:3px}.card{border:1px solid #d9e1e8;border-radius:10px;padding:16px;margin:16px 0}pre{background:#f5f7f9;padding:12px;overflow:auto}small{color:#667}button{cursor:pointer}.danger{border-color:#e0a}.tag{display:inline-block;background:#eef4fa;border-radius:6px;padding:0 6px;margin-left:6px}</style></head>
+<body><h1>跨区域水资源使用权</h1><p>账户、限额令、取水与转让审批共用同一套可用量：<b>限额令 = min(许可额度, 额度×限额比例)</b>；待审批转让立即预占，已登记取水不回改，超限待审批自动退回。</p>
+<div class="card"><h2>身份</h2><input id="user" value="alice"><select id="role"><option>editor</option><option>reviewer</option><option>meter</option><option>dispatcher</option><option>viewer</option></select>
+<label><input type="checkbox" id="autoKey" checked> 自动幂等键</label></div>
 <div class="card"><h2>账户</h2><button onclick="getAccounts()">刷新账户</button><pre id="accounts">等待操作…</pre></div>
+<div class="card danger"><h2>旱期限额令<span class="tag">dispatcher</span></h2>
+<input id="do_region" value="upstream" placeholder="地区"><input id="do_frac" type="number" value="0.6" step="0.05" placeholder="限额比例"><input id="do_date" type="date" value="2026-06-01"><input id="do_note" placeholder="说明（可选）">
+<button onclick="droughtOrder()">发布/更新限额令</button> <button onclick="listOrders()">查看限额令</button><pre id="drought_order">等待操作…</pre></div>
 <div class="card"><h2>发起转让</h2><input id="from" type="number" value="1" placeholder="转出账户"><input id="to" type="number" value="2" placeholder="转入账户"><input id="amount" type="number" value="400"><input id="date" type="date" value="2026-06-01"><button onclick="transfer()">提交审批</button><pre id="result"></pre></div>
 <div class="card"><h2>审批最新转让</h2><input id="transfer_id" type="number" placeholder="转让 ID"><button onclick="approve()">批准</button><button onclick="reject()">退回</button></div>
-<div class="card"><h2>干旱情景</h2><input id="supply" type="number" value="1200"><input id="reduction" type="number" value="0.3" step="0.1"><button onclick="simulate()">模拟</button><pre id="drought">等待操作…</pre></div>
+<div class="card"><h2>登记计量取水<span class="tag">meter</span></h2>
+<input id="m_account" type="number" value="2" placeholder="账户 ID"><input id="m_amount" type="number" value="400" placeholder="取水量"><input id="m_event" placeholder="计量事件号" value="DN-2026-0001"><input id="m_date" type="date" value="2026-06-05"><input id="m_transfer" type="number" placeholder="关联转让 ID（可选）">
+<button onclick="meter()">登记取水</button><pre id="meter_result"></pre><small>取水先进入持久化收件箱再入账；服务崩溃重启后自动恢复，且不会重复扣减。关联转让时实际到水量会与批准量对账。</small></div>
+<div class="card"><h2>对账报告</h2><button onclick="reconciliation()">查看对账差异</button><pre id="recon">等待操作…</pre></div>
+<div class="card"><h2>干旱情景（模拟）</h2><input id="supply" type="number" value="1200"><input id="reduction" type="number" value="0.3" step="0.1"><button onclick="simulate()">模拟</button><pre id="drought">等待操作…</pre></div>
 <script>
-const headers=()=>({'Content-Type':'application/json','X-User':user.value,'X-Role':role.value});
+const headers=()=>{const h={'Content-Type':'application/json','X-User':user.value,'X-Role':role.value};if(autoKey.checked)h['Idempotency-Key']=crypto.randomUUID?crypto.randomUUID():(Date.now()+'-'+Math.random());return h};
 async function call(url,opts={}){const r=await fetch(url,opts);const j=await r.json();if(!r.ok)throw Error(j.error||r.status);return j}
 async function getAccounts(){try{accounts.textContent=JSON.stringify(await call('/api/accounts'),null,2)}catch(e){accounts.textContent=e.message}}
+async function droughtOrder(){try{drought_order.textContent=JSON.stringify(await call('/api/drought/orders',{method:'POST',headers:headers(),body:JSON.stringify({region:do_region.value,cap_fraction:+do_frac.value,effective_from:do_date.value,note:do_note.value})}),null,2)}catch(e){drought_order.textContent=e.message}}
+async function listOrders(){try{drought_order.textContent=JSON.stringify(await call('/api/drought/orders'),null,2)}catch(e){drought_order.textContent=e.message}}
 async function transfer(){try{result.textContent=JSON.stringify(await call('/api/transfers',{method:'POST',headers:headers(),body:JSON.stringify({from_account_id:+from.value,to_account_id:+to.value,amount:+amount.value,effective_date:date.value})}),null,2)}catch(e){result.textContent=e.message}}
 async function approve(){try{result.textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/approve',{method:'POST',headers:headers(),body:'{}'}),null,2)}catch(e){result.textContent=e.message}}
-async function reject(){try{result.textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/reject',{method:'POST',headers:headers(),body:'{}'}),null,2)}catch(e){result.textContent=e.message}}
+async function reject(){try{result.textContent=JSON.stringify(await call('/api/transfers/'+transfer_id.value+'/reject',{method:'POST',headers:headers(),body:JSON.stringify({reason:'页面退回'})}),null,2)}catch(e){result.textContent=e.message}}
+async function meter(){const t=m_transfer.value?{transfer_id:+m_transfer.value}:{};try{meter_result.textContent=JSON.stringify(await call('/api/usage',{method:'POST',headers:headers(),body:JSON.stringify({account_id:+m_account.value,amount:+m_amount.value,meter_event_id:m_event.value,occurred_at:m_date.value,...t})}),null,2)}catch(e){meter_result.textContent=e.message}}
+async function reconciliation(){try{recon.textContent=JSON.stringify(await call('/api/reconciliation'),null,2)}catch(e){recon.textContent=e.message}}
 async function simulate(){try{drought.textContent=JSON.stringify(await call('/api/drought/simulate?supply='+supply.value+'&reduction='+reduction.value),null,2)}catch(e){drought.textContent=e.message}}
 </script></body></html>
